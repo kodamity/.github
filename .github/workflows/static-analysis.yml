@@ -4,15 +4,29 @@ on:
   workflow_call:
     inputs:
       php-version:
+        description: 'PHP version'
         required: false
         type: string
-        default: '8.3'
+        default: '["8.3", "8.4"]'
+      add-org-packagist:
+        description: 'Should add kodamity org packagist'
+        required: false
+        type: boolean
+        default: false
+    secrets:
+      composer-auth-json:
+        description: 'Composer auth.json content'
+        required: false
 
 jobs:
   static-analysis:
-    name: Static Analysis
     runs-on: ubuntu-latest
     timeout-minutes: 5
+    strategy:
+      fail-fast: false
+      matrix:
+        php: ${{ fromJson(inputs.php-version) }}
+    name: PHP ${{ matrix.php }}
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -20,11 +34,23 @@ jobs:
       - name: Setup PHP
         uses: shivammathur/setup-php@v2
         with:
-          php-version: ${{ inputs.php-version }}
+          php-version: ${{ matrix.php }}
           coverage: none
+
+      - name: Add Organization Package Repository
+        if: ${{ inputs.add-org-packagist }}
+        run: composer config repositories.kodamity composer "https://packagist.kodamity.dev"
+
+      - name: Write composer auth config
+        if: ${{ inputs.add-org-packagist }}
+        uses: DamianReeves/write-file-action@v1.3
+        with:
+          path: auth.json
+          contents: ${{ secrets.composer-auth-json }}
+          write-mode: overwrite
 
       - name: Install composer dependencies
         uses: ramsey/composer-install@v3
 
-      - name: Execute type checking
+      - name: Execute static analysis
         run: ./vendor/bin/phpstan --error-format=github
