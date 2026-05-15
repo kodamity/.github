@@ -8,6 +8,16 @@ on:
         required: false
         type: string
         default: '["8.3", "8.4"]'
+      extensions:
+        description: 'PHP extensions to install'
+        required: false
+        type: string
+        default: 'dom, curl, libxml, mbstring, zip, pcntl, pdo, sqlite, pdo_sqlite, bcmath, soap, intl, gd, exif, iconv, imagick, fileinfo'
+      ini-values:
+        description: 'php.ini values to set (csv, e.g. post_max_size=256M, max_execution_time=180)'
+        required: false
+        type: string
+        default: ''
       add-org-packagist:
         description: 'Should add kodamity org packagist'
         required: false
@@ -35,6 +45,8 @@ jobs:
         uses: shivammathur/setup-php@v2
         with:
           php-version: ${{ matrix.php }}
+          extensions: ${{ inputs.extensions }}
+          ini-values: ${{ inputs.ini-values }}
           coverage: none
 
       - name: Add Organization Package Repository
