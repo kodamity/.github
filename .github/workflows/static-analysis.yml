@@ -39,7 +39,7 @@ jobs:
     name: PHP ${{ matrix.php }}
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Setup PHP
         uses: shivammathur/setup-php@v2
@@ -62,7 +62,7 @@ jobs:
           write-mode: overwrite
 
       - name: Install composer dependencies
-        uses: ramsey/composer-install@v3
+        uses: ramsey/composer-install@v4
 
       - name: Execute static analysis
         run: ./vendor/bin/phpstan --error-format=github
