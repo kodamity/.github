@@ -1,0 +1,86 @@
+name: Release
+
+on:
+  workflow_call:
+    inputs:
+      version:
+        description: 'Release version (e.g. 1.2.3)'
+        required: true
+        type: string
+      branch:
+        description: 'Target branch'
+        required: false
+        type: string
+        default: main
+      prerelease:
+        description: 'Mark as pre-release'
+        required: false
+        type: boolean
+        default: false
+      tag-prefix:
+        description: 'Tag prefix (e.g. "v")'
+        required: false
+        type: string
+        default: ''
+      cliff-config-ref:
+        description: 'Git ref of kodamity/.github to fetch default cliff.toml from'
+        required: false
+        type: string
+        default: main
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+          ref: ${{ inputs.branch }}
+
+      - name: Fetch default cliff.toml if absent
+        env:
+          REF: ${{ inputs.cliff-config-ref }}
+        run: |
+          if [ ! -f cliff.toml ]; then
+            curl -sSLf -o cliff.toml \
+              "https://raw.githubusercontent.com/kodamity/.github/$REF/cliff.toml"
+          fi
+
+      - name: Generate release notes
+        id: notes
+        uses: orhun/git-cliff-action@v4
+        with:
+          config: cliff.toml
+          args: --unreleased --tag ${{ inputs.tag-prefix }}${{ inputs.version }} --strip all
+
+      - name: Update CHANGELOG.md
+        uses: orhun/git-cliff-action@v4
+        with:
+          config: cliff.toml
+          args: --tag ${{ inputs.tag-prefix }}${{ inputs.version }}
+        env:
+          OUTPUT: CHANGELOG.md
+
+      - name: Commit CHANGELOG and create tag
+        uses: stefanzweifel/git-auto-commit-action@v7
+        with:
+          branch: ${{ inputs.branch }}
+          commit_message: "chore(release): ${{ inputs.tag-prefix }}${{ inputs.version }}"
+          file_pattern: CHANGELOG.md
+          tagging_message: ${{ inputs.tag-prefix }}${{ inputs.version }}
+
+      - name: Create GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ inputs.tag-prefix }}${{ inputs.version }}
+          NOTES: ${{ steps.notes.outputs.content }}
+          PRERELEASE: ${{ inputs.prerelease }}
+        run: |
+          if [ "$PRERELEASE" = "true" ]; then
+            gh release create "$TAG" --prerelease --notes "$NOTES"
+          else
+            gh release create "$TAG" --notes "$NOTES"
+          fi
