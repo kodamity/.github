@@ -58,8 +58,11 @@ jobs:
               "https://raw.githubusercontent.com/kodamity/.github/$REF/cliff.toml"
           fi
 
-      - name: Initialize CHANGELOG.md if absent
-        run: touch CHANGELOG.md
+      - name: Initialize CHANGELOG.md if absent or empty
+        run: |
+          if [ ! -s CHANGELOG.md ]; then
+            printf '# Changelog\n\nAll notable changes to this project will be documented in this file.\n\n' > CHANGELOG.md
+          fi
 
       - name: Generate release notes
         id: notes
