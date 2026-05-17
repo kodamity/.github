@@ -4,7 +4,7 @@ on:
   workflow_call:
     inputs:
       version:
-        description: 'Release version (e.g. 1.2.3)'
+        description: 'Release version (e.g. 1.2.3 — without v prefix)'
         required: true
         type: string
       branch:
@@ -34,6 +34,15 @@ jobs:
     permissions:
       contents: write
     steps:
+      - name: Validate version
+        env:
+          VERSION: ${{ inputs.version }}
+        run: |
+          if ! printf '%s' "$VERSION" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$'; then
+            echo "::error::Invalid version '$VERSION'. Expected semver (e.g. 1.2.3 or 1.2.3-rc.1), without v prefix."
+            exit 1
+          fi
+
       - name: Checkout code
         uses: actions/checkout@v6
         with:
@@ -49,6 +58,9 @@ jobs:
               "https://raw.githubusercontent.com/kodamity/.github/$REF/cliff.toml"
           fi
 
+      - name: Initialize CHANGELOG.md if absent
+        run: touch CHANGELOG.md
+
       - name: Generate release notes
         id: notes
         uses: orhun/git-cliff-action@v4
@@ -60,9 +72,7 @@ jobs:
         uses: orhun/git-cliff-action@v4
         with:
           config: cliff.toml
-          args: --tag ${{ inputs.tag-prefix }}${{ inputs.version }}
-        env:
-          OUTPUT: CHANGELOG.md
+          args: --unreleased --tag ${{ inputs.tag-prefix }}${{ inputs.version }} --prepend CHANGELOG.md
 
       - name: Commit CHANGELOG and create tag
         uses: stefanzweifel/git-auto-commit-action@v7

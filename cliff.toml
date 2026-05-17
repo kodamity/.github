@@ -1,5 +1,5 @@
 # Reference cliff.toml for kodamity/.github reusable release workflow.
-# Copy this file to the root of a consumer repo and tweak as needed.
+# Auto-fetched at workflow runtime if consumer repo has no local cliff.toml.
 
 [changelog]
 header = """
@@ -7,13 +7,10 @@ header = """
 
 All notable changes to this project will be documented in this file.
 
-The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
-and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
-
 """
 body = """
 {% if version %}\
-    ## [{{ version | trim_start_matches(pat="v") }}] - {{ timestamp | date(format="%Y-%m-%d") }}
+    ## v{{ version | trim_start_matches(pat="v") }} - {{ timestamp | date(format="%Y-%m-%d") }}
 {% else %}\
     ## [unreleased]
 {% endif %}\
@@ -22,14 +19,17 @@ body = """
     {% for commit in commits %}
         - {% if commit.scope %}*({{ commit.scope }})* {% endif %}{{ commit.message | upper_first }}\
     {% endfor %}
-{% endfor %}\n
+{% endfor %}
+{% if previous and previous.version %}
+**Full Changelog**: https://github.com/{{ get_env(name="GITHUB_REPOSITORY") }}/compare/{{ previous.version }}...{{ version }}
+{% endif %}\n
 """
 footer = ""
 trim = true
 
 [git]
 conventional_commits = true
-filter_unconventional = false
+filter_unconventional = true
 commit_parsers = [
     { message = "^feat", group = "Features" },
     { message = "^fix", group = "Bug Fixes" },
@@ -43,7 +43,6 @@ commit_parsers = [
     { message = "^chore", group = "Chores" },
     { message = "^style", skip = true },
     { message = "^revert", group = "Reverts" },
-    { message = ".*", group = "Other" },
 ]
 filter_commits = false
 tag_pattern = "v?[0-9].*"
