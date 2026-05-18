@@ -64,18 +64,28 @@ jobs:
             printf '# Changelog\n\nAll notable changes to this project will be documented in this file.\n\n' > CHANGELOG.md
           fi
 
-      - name: Generate release notes
-        id: notes
+      - name: Generate new changelog section
+        id: cliff
         uses: orhun/git-cliff-action@v4
         with:
           config: cliff.toml
-          args: --unreleased --tag ${{ inputs.tag-prefix }}${{ inputs.version }} --strip all
+          args: --unreleased --tag ${{ inputs.tag-prefix }}${{ inputs.version }}
 
-      - name: Update CHANGELOG.md
-        uses: orhun/git-cliff-action@v4
-        with:
-          config: cliff.toml
-          args: --unreleased --tag ${{ inputs.tag-prefix }}${{ inputs.version }} --prepend CHANGELOG.md
+      - name: Insert new section into CHANGELOG.md
+        env:
+          NEW_CONTENT: ${{ steps.cliff.outputs.content }}
+        run: |
+          SPLIT_LINE=$(grep -n '^## ' CHANGELOG.md | head -1 | cut -d: -f1 || true)
+          if [ -z "$SPLIT_LINE" ]; then
+            printf '%s\n' "$NEW_CONTENT" >> CHANGELOG.md
+          else
+            {
+              head -n $((SPLIT_LINE - 1)) CHANGELOG.md
+              printf '%s\n' "$NEW_CONTENT"
+              tail -n +$SPLIT_LINE CHANGELOG.md
+            } > CHANGELOG.md.tmp
+            mv CHANGELOG.md.tmp CHANGELOG.md
+          fi
 
       - name: Commit CHANGELOG and create tag
         uses: stefanzweifel/git-auto-commit-action@v7
@@ -89,7 +99,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           TAG: ${{ inputs.tag-prefix }}${{ inputs.version }}
-          NOTES: ${{ steps.notes.outputs.content }}
+          NOTES: ${{ steps.cliff.outputs.content }}
           PRERELEASE: ${{ inputs.prerelease }}
         run: |
           if [ "$PRERELEASE" = "true" ]; then
