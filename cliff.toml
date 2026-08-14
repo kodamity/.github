@@ -12,7 +12,7 @@ body = """
 {% for group, commits in commits | group_by(attribute="group") %}
     ### {{ group | striptags | trim | upper_first }}
     {% for commit in commits %}
-        - {% if commit.scope %}*({{ commit.scope }})* {% endif %}{{ commit.message | upper_first }}\
+        - {% if commit.breaking %}[**breaking**] {% endif %}{% if commit.scope %}*({{ commit.scope }})* {% endif %}{{ commit.message | upper_first }}\
     {% endfor %}
 {% endfor %}
 {% if previous and previous.version %}
@@ -25,6 +25,16 @@ trim = true
 [git]
 conventional_commits = true
 filter_unconventional = true
+# Squash merges keep every original commit in the body, so the changelog is built from
+# those instead of the single PR line. Splitting alone is not enough: git-cliff renders
+# every leftover body line as a copy of the commit subject, which turns one dependabot
+# commit into five identical entries. The preprocessor therefore keeps only the body
+# lines that are conventional commits themselves, and falls back to the subject when
+# the body carries none.
+split_commits = true
+commit_preprocessors = [
+    { pattern = '(?s)^.*$', replace_command = '''awk '{ l = $0; sub(/^[*-] +/, "", l); if (NR == 1) { s = l } else if (l ~ /^(build|chore|ci|docs|feat|fix|perf|refactor|revert|style|test)(\([^)]*\))?!?: /) { b[++n] = l } } END { if (n) { for (i = 1; i <= n; i++) print b[i] } else { print s } }' ''' },
+]
 commit_parsers = [
     { message = "^feat", group = "Features" },
     { message = "^fix", group = "Bug Fixes" },
