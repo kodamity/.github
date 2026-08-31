@@ -1,0 +1,118 @@
+name: "CI plan"
+
+on:
+  workflow_call:
+    inputs:
+      full-matrix:
+        description: 'JSON matrix used on protected branches and on demand'
+        required: true
+        type: string
+      reduced-matrix:
+        description: 'JSON matrix used on every other ref'
+        required: true
+        type: string
+      full-matrix-refs:
+        description: 'Comma-separated branches that always get the full matrix'
+        required: false
+        type: string
+        default: 'main,develop'
+      full-matrix-label:
+        description: 'Pull request label that opts into the full matrix'
+        required: false
+        type: string
+        default: 'ci:full-matrix'
+    outputs:
+      run:
+        description: 'Whether the caller should run at all'
+        value: ${{ jobs.plan.outputs.run }}
+      matrix:
+        description: 'The matrix the caller should use'
+        value: ${{ jobs.plan.outputs.matrix }}
+
+permissions:
+  contents: read
+  pull-requests: read
+
+jobs:
+  plan:
+    name: Plan
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    outputs:
+      run: ${{ steps.dedupe.outputs.run }}
+      matrix: ${{ steps.matrix.outputs.matrix }}
+    steps:
+      # A branch with an open pull request gets two runs for one commit: the push
+      # event and the pull_request event. The pull_request run is the one worth
+      # keeping — it tests the merge result rather than the branch tip.
+      - name: Decide whether this run is a duplicate
+        id: dedupe
+        env:
+          GH_TOKEN: ${{ github.token }}
+          EVENT: ${{ github.event_name }}
+          REPO: ${{ github.repository }}
+          SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+
+          if [ "$EVENT" != 'push' ]; then
+            echo 'run=true' >> "$GITHUB_OUTPUT"
+            echo "::notice::$EVENT run — proceeding."
+            exit 0
+          fi
+
+          open=$(gh api "/repos/$REPO/commits/$SHA/pulls" \
+            --jq '[.[] | select(.state == "open")] | length')
+
+          if [ "$open" -gt 0 ]; then
+            echo 'run=false' >> "$GITHUB_OUTPUT"
+            echo "::notice::Commit $SHA is covered by an open pull request — leaving it to the pull_request run."
+          else
+            echo 'run=true' >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Pick the matrix for this ref
+        id: matrix
+        env:
+          FULL: ${{ inputs.full-matrix }}
+          REDUCED: ${{ inputs.reduced-matrix }}
+          FULL_REFS: ${{ inputs.full-matrix-refs }}
+          FULL_LABEL: ${{ inputs.full-matrix-label }}
+          EVENT: ${{ github.event_name }}
+          REF_NAME: ${{ github.ref_name }}
+          LABELS: ${{ toJson(github.event.pull_request.labels.*.name) }}
+        run: |
+          set -euo pipefail
+
+          full=false
+          case "$EVENT" in
+            workflow_dispatch)
+              full=true
+              ;;
+            push)
+              if printf ',%s,' "$FULL_REFS" | tr -d ' ' | grep -qF ",$REF_NAME,"; then
+                full=true
+              fi
+              ;;
+            pull_request)
+              if printf '%s' "$LABELS" | jq -e --arg l "$FULL_LABEL" 'index($l) != null' >/dev/null; then
+                full=true
+              fi
+              ;;
+          esac
+
+          if [ "$full" = true ]; then
+            echo "::notice::Running the full matrix."
+            selected="$FULL"
+          else
+            echo "::notice::Running the reduced matrix — add the '$FULL_LABEL' label or merge to a protected branch for the full one."
+            selected="$REDUCED"
+          fi
+
+          printf '%s' "$selected" | jq -e . > /dev/null
+
+          {
+            echo 'matrix<<__CI_PLAN_MATRIX__'
+            printf '%s\n' "$selected"
+            echo '__CI_PLAN_MATRIX__'
+          } >> "$GITHUB_OUTPUT"
