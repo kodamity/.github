@@ -1,0 +1,87 @@
+name: "Hygiene"
+
+on:
+  workflow_call:
+    inputs:
+      php:
+        description: 'PHP version used to run the tools'
+        required: false
+        default: "8.3"
+        type: string
+      message:
+        description: 'Commit message for the fixes'
+        required: false
+        default: Fix code styling and normalize composer.json
+        type: string
+      fix:
+        description: 'Commit the fixes back to the branch'
+        required: false
+        default: true
+        type: boolean
+      audit:
+        description: 'Run composer audit'
+        required: false
+        default: true
+        type: boolean
+      add-org-packagist:
+        description: 'Should add kodamity org packagist'
+        required: false
+        default: false
+        type: boolean
+    secrets:
+      composer-auth-json:
+        description: 'Composer auth.json content'
+        required: false
+
+permissions:
+  contents: write
+
+jobs:
+  hygiene:
+    name: Hygiene
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v6
+
+      - name: Setup PHP
+        uses: shivammathur/setup-php@v2
+        env:
+          COMPOSER_AUTH_JSON: ${{ secrets.composer-auth-json }}
+        with:
+          php-version: ${{ inputs.php }}
+          tools: composer:v2, php-cs-fixer
+          extensions: json, dom, curl, libxml, mbstring
+          coverage: none
+
+      - name: Run PHP CS Fixer
+        run: php-cs-fixer fix --diff --allow-risky=yes
+
+      - name: Normalize composer.json file
+        run: |
+          composer global config --no-plugins allow-plugins.ergebnis/composer-normalize true
+          composer global require ergebnis/composer-normalize
+          composer normalize
+
+      - name: Commit fixed files
+        if: ${{ inputs.fix }}
+        uses: stefanzweifel/git-auto-commit-action@v7
+        with:
+          commit_message: ${{ inputs.message }}
+
+      - name: Add Organization Package Repository
+        if: ${{ inputs.audit && inputs.add-org-packagist }}
+        run: composer config repositories.kodamity composer "https://packagist.kodamity.dev"
+
+      # Libraries do not commit a lock file, so resolve one first. --no-install keeps
+      # this to a dependency resolution: nothing is downloaded into vendor.
+      - name: Resolve dependencies for the audit
+        if: ${{ inputs.audit }}
+        run: composer update --no-install --no-interaction
+
+      # Advisories that cannot be acted on belong in composer.json under
+      # config.audit.ignore, so the report stays a signal rather than noise.
+      - name: Audit dependencies
+        if: ${{ inputs.audit }}
+        run: composer audit --locked --abandoned=report --format=table
