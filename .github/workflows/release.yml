@@ -3,25 +3,21 @@ name: Release
 on:
   workflow_call:
     inputs:
-      version:
-        description: 'Release version (e.g. 1.2.3 — without v prefix)'
-        required: true
+      bump:
+        description: 'Which part of the version to bump: patch, minor or major'
+        required: false
         type: string
+        default: patch
       branch:
         description: 'Target branch'
         required: false
         type: string
         default: main
-      prerelease:
-        description: 'Mark as pre-release'
-        required: false
-        type: boolean
-        default: false
       tag-prefix:
         description: 'Tag prefix (e.g. "v")'
         required: false
         type: string
-        default: ''
+        default: v
       cliff-config-ref:
         description: 'Git ref of kodamity/.github to fetch default cliff.toml from'
         required: false
@@ -34,22 +30,52 @@ jobs:
     permissions:
       contents: write
     steps:
-      - name: Validate version
-        env:
-          VERSION: ${{ inputs.version }}
-        run: |
-          if ! printf '%s' "$VERSION" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$'; then
-            echo "::error::Invalid version '$VERSION'. Expected semver (e.g. 1.2.3 or 1.2.3-rc.1), without v prefix."
-            exit 1
-          fi
-
       - name: Checkout code
         uses: actions/checkout@v6
         with:
           fetch-depth: 0
           ref: ${{ inputs.branch }}
 
+      - name: Fail on an open draft release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          DRAFT=$(gh release list --limit 20 --json isDraft,tagName --jq 'map(select(.isDraft)) | first | .tagName // ""')
+          if [ -n "$DRAFT" ]; then
+            echo "::error::Draft release $DRAFT is still open. Publish or delete it before preparing a new one."
+            exit 1
+          fi
+
+      - name: Compute next version
+        id: ver
+        env:
+          BUMP: ${{ inputs.bump }}
+          PREFIX: ${{ inputs.tag-prefix }}
+        run: |
+          set -euo pipefail
+          case "$BUMP" in
+            patch|minor|major) ;;
+            *) echo "::error::Invalid bump '$BUMP'. Expected patch, minor or major."; exit 1 ;;
+          esac
+          last=$(git tag -l "${PREFIX}*" --sort=-v:refname | grep -E "^${PREFIX}[0-9]+\.[0-9]+\.[0-9]+$" | head -1 || true)
+          if [ -n "$last" ] && [ -z "$(git log "${last}..HEAD" --no-merges --oneline | head -1)" ]; then
+            echo "::notice::No commits since ${last} — nothing to release"
+            echo "next=" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          [ -n "$last" ] || last="${PREFIX}0.0.0"
+          IFS=. read -r MAJOR MINOR PATCH <<<"${last#"$PREFIX"}"
+          case "$BUMP" in
+            major) next="${PREFIX}$((MAJOR + 1)).0.0" ;;
+            minor) next="${PREFIX}${MAJOR}.$((MINOR + 1)).0" ;;
+            patch) next="${PREFIX}${MAJOR}.${MINOR}.$((PATCH + 1))" ;;
+          esac
+          echo "next=$next" >> "$GITHUB_OUTPUT"
+          echo "last=$last next=$next"
+
       - name: Fetch default cliff.toml if absent
+        if: ${{ steps.ver.outputs.next != '' }}
         env:
           REF: ${{ inputs.cliff-config-ref }}
         run: |
@@ -59,19 +85,22 @@ jobs:
           fi
 
       - name: Initialize CHANGELOG.md if absent or empty
+        if: ${{ steps.ver.outputs.next != '' }}
         run: |
           if [ ! -s CHANGELOG.md ]; then
             printf '# Changelog\n\nAll notable changes to this project will be documented in this file.\n\n' > CHANGELOG.md
           fi
 
       - name: Generate new changelog section
+        if: ${{ steps.ver.outputs.next != '' }}
         id: cliff
         uses: orhun/git-cliff-action@v4
         with:
           config: cliff.toml
-          args: --unreleased --tag ${{ inputs.tag-prefix }}${{ inputs.version }}
+          args: --unreleased --tag ${{ steps.ver.outputs.next }}
 
       - name: Insert new section into CHANGELOG.md
+        if: ${{ steps.ver.outputs.next != '' }}
         env:
           NEW_CONTENT: ${{ steps.cliff.outputs.content }}
         run: |
@@ -87,23 +116,22 @@ jobs:
             mv CHANGELOG.md.tmp CHANGELOG.md
           fi
 
-      - name: Commit CHANGELOG and create tag
+      - name: Commit CHANGELOG
+        if: ${{ steps.ver.outputs.next != '' }}
+        id: commit
         uses: stefanzweifel/git-auto-commit-action@v7
         with:
           branch: ${{ inputs.branch }}
-          commit_message: "chore(release): ${{ inputs.tag-prefix }}${{ inputs.version }}"
+          commit_message: "chore(release): ${{ steps.ver.outputs.next }}"
           file_pattern: CHANGELOG.md
-          tagging_message: ${{ inputs.tag-prefix }}${{ inputs.version }}
 
-      - name: Create GitHub Release
+      - name: Create draft release
+        if: ${{ steps.ver.outputs.next != '' }}
         env:
           GH_TOKEN: ${{ github.token }}
-          TAG: ${{ inputs.tag-prefix }}${{ inputs.version }}
+          TAG: ${{ steps.ver.outputs.next }}
           NOTES: ${{ steps.cliff.outputs.content }}
-          PRERELEASE: ${{ inputs.prerelease }}
+          TARGET: ${{ steps.commit.outputs.commit_hash }}
         run: |
-          if [ "$PRERELEASE" = "true" ]; then
-            gh release create "$TAG" --prerelease --notes "$NOTES"
-          else
-            gh release create "$TAG" --notes "$NOTES"
-          fi
+          gh release create "$TAG" --draft --target "$TARGET" --title "$TAG" --notes "$NOTES"
+          echo "::notice::Draft $TAG created — publish it by hand to create the tag and release the package"
